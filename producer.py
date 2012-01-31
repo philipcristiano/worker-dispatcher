@@ -7,16 +7,13 @@ promise = client.connect()
 time.sleep(.1)
 client.wait(promise)
 
-promise = client.queue_declare(queue='task_queue', durable=True)
-client.wait(promise)
-
 count = 0
 while True:
-    promise = client.basic_publish(exchange='',
+    promise = client.basic_publish(exchange='events',
                                    routing_key='task_queue',
-                                   body="Hello World!")
+                                   body="Hello World! {0}".format(count))
     client.wait(promise)
-    time.sleep(1)
+    time.sleep(.01)
     count += 1
     print count
 
