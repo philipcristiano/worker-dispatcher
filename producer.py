@@ -16,7 +16,7 @@ def producer():
                                        routing_key='task_queue',
                                        body="Hello World! {0}".format(count))
         client.wait(promise)
-        time.sleep(.01)
+        time.sleep(1)
         count += 1
         print count
 

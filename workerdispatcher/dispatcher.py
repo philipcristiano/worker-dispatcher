@@ -10,6 +10,8 @@ import pymongo
 from mongo_pool import put as mongo_put
 
 
+PUBLISH_QUEUE = gevent.queue.Queue()
+
 def insert(data):
     result = gevent.event.AsyncResult()
 
@@ -19,10 +21,53 @@ def insert(data):
     mongo_put(func, result)
     result.get()
 
+def publish(*args, **kwargs):
+    result = gevent.event.AsyncResult()
+    PUBLISH_QUEUE.put((args, kwargs, result))
+    return result.get()
+
+def handle_publish_queue_items(client):
+    while True:
+        for _ in range(PUBLISH_QUEUE.qsize()):
+            try:
+                args, kwargs, async_result = PUBLISH_QUEUE.get(timeout=.1)
+            except gevent.queue.Empty:
+                continue
+
+            def callback(promise, result):
+                async_result.set(result)
+
+            promise=client.basic_publish(callback=callback, *args, **kwargs)
+        client.loop(.001)
+        #promise = client.basic_publish(*args, **kwargs)
+        #result = client.wait(promise)
+        #async_result.set(result)
+
 def callback(queue_name, msg_result):
     insert({'body': msg_result['body']})
+    publish(exchange='', routing_key='results', body=msg_result['body'])
     print queue_name, " [x] Received %r" % (msg_result['body'],)
     return msg_result
+
+def publisher():
+    client = puka.Client("amqp://guest:guest@33.33.33.10:5672/")
+    promise = client.connect()
+    print 'publisher connecting'
+    time.sleep(1)
+    client.wait(promise)
+    while True:
+        handle_publish_queue_items(client)
+
+def build_ack_callback(ack_queue, messages):
+    acks = set()
+    def finish(glet):
+        tag = messages[glet]['delivery_tag']
+        assert tag not in acks
+        acks.add(tag)
+        print messages[glet]
+        ack_queue.put(messages[glet])
+
+    return finish
 
 def consumer(queue_name):
     """Spawn a new consumer"""
@@ -51,14 +96,14 @@ def consumer(queue_name):
             greenlet = pool.spawn(callback, queue_name, msg_result)
             messages[greenlet] = msg_result
 
-            def finish(glet):
-                ack_queue.put(messages[glet])
+            func = build_ack_callback(ack_queue, messages)
 
-            greenlet.link(finish)
-        #client.basic_ack(msg_result)
+            greenlet.link(func)
         for _ in range(ack_queue.qsize()):
             client.basic_ack(ack_queue.get())
 
 greenlet_1 = gevent.spawn(consumer, 'queue_1')
 greenlet_2 = gevent.spawn(consumer, 'queue_2')
+greenlet_3 = gevent.spawn(consumer, 'queue_3')
+greenlet_publisher = gevent.spawn(publisher)
 greenlet_1.join()

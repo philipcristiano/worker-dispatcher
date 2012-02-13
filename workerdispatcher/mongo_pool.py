@@ -16,7 +16,7 @@ def worker():
         item(conn)
         result.set('200')
 
-size = 2
+size = 1
 pool = gevent.pool.Pool(size)
 for i in range(size):
     pool.spawn(worker)
